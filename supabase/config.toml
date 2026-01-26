@@ -1,0 +1,17 @@
+# Replace with your new Supabase project ID
+project_id = "your-new-project-id"
+
+[functions.auto-release-capsules]
+verify_jwt = false
+
+[functions.verify-username]
+verify_jwt = false
+
+[functions.payment-webhook]
+verify_jwt = false
+
+[functions.initialize-payment]
+verify_jwt = false
+
+[functions.admin-create-user]
+verify_jwt = false
