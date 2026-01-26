@@ -576,19 +576,34 @@ const slashCapsules = async (id: string, amount: number) => {
   // Settings CRUD - use upsert to handle both create and update
   const updateSetting = async (key: string, value: any): Promise<boolean> => {
     try {
-      // Use upsert for atomic create-or-update
-      const { error } = await supabase.from('app_settings').upsert({
-        key,
-        value,
-        updated_at: new Date().toISOString(),
-      } as any, {
-        onConflict: 'key',
-      });
+      // First check if setting exists
+      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', key).single();
       
-      if (error) {
-        console.error('Failed to save setting:', key, error);
-        toast.error(`Failed to save ${key}: ${error.message}`);
-        return false;
+      if (existing) {
+        // Update existing
+        const { error } = await supabase.from('app_settings').update({
+          value,
+          updated_at: new Date().toISOString(),
+        }).eq('key', key);
+        
+        if (error) {
+          console.error('Failed to update setting:', key, error);
+          toast.error(`Failed to save ${key}: ${error.message}`);
+          return false;
+        }
+      } else {
+        // Insert new
+        const { error } = await supabase.from('app_settings').insert({
+          key,
+          value,
+          updated_at: new Date().toISOString(),
+        } as any);
+        
+        if (error) {
+          console.error('Failed to insert setting:', key, error);
+          toast.error(`Failed to save ${key}: ${error.message}`);
+          return false;
+        }
       }
       
       console.log('Setting saved successfully:', key);
