@@ -72,15 +72,16 @@ export function useAdminData() {
     if (!silent) setIsLoading(true);
     try {
       // Fetch all data in parallel with individual error handling
-      const [profilesRes, rolesRes, trustRes, submissionsRes, adsRes, settingsRes, adminTasksRes, tasksRes] = await Promise.all([
+      const [profilesRes, rolesRes, trustRes, submissionsRes, adsRes, settingsRes, adminTasksRes, tasksRes, configRes] = await Promise.all([
         supabase.from('profiles').select('*').order('created_at', { ascending: false }),
         supabase.from('user_roles').select('*'),
         supabase.from('user_trust_scores').select('*').order('trust_score', { ascending: false }),
         supabase.from('task_submissions').select('*').order('created_at', { ascending: false }),
         supabase.from('ad_zones').select('*').order('created_at', { ascending: false }),
-        supabase.from('app_settings').select('*'),
+        supabase.from('app_settings').select('*').catch(() => ({ data: [] })),
         supabase.from('admin_tasks').select('*').order('priority', { ascending: false }),
         supabase.from('tasks').select('*').order('created_at', { ascending: false }),
+        supabase.from('admin_config').select('*').catch(() => ({ data: [] })),
       ]);
 
       // Log any errors for debugging
@@ -92,6 +93,7 @@ export function useAdminData() {
       if (settingsRes.error) console.error('Settings fetch error:', settingsRes.error);
       if (adminTasksRes.error) console.error('Admin tasks fetch error:', adminTasksRes.error);
       if (tasksRes.error) console.error('Tasks fetch error:', tasksRes.error);
+      if (configRes.error) console.error('Config fetch error:', configRes.error);
 
       // Set data even if some queries fail (use empty arrays as fallback)
       setProfiles((profilesRes.data || []) as Profile[]);
@@ -99,7 +101,8 @@ export function useAdminData() {
       setTrustScores(trustRes.data || []);
       setSubmissions(submissionsRes.data || []);
       setAdZones((adsRes.data || []) as AdZone[]);
-      setSettings((settingsRes.data || []) as AppSetting[]);
+      // Combine app_settings and admin_config for settings
+      setSettings([...(settingsRes.data || []), ...(configRes.data || [])] as AppSetting[]);
       setAdminTasks((adminTasksRes.data || []) as AdminTask[]);
       setTasks((tasksRes.data || []) as UserTask[]);
 
@@ -573,37 +576,32 @@ const slashCapsules = async (id: string, amount: number) => {
     return updateAd(id, { enabled } as any);
   };
 
-  // Settings CRUD - use upsert to handle both create and update
+  // Settings CRUD - use admin_config table for simplified storage
   const updateSetting = async (key: string, value: any): Promise<boolean> => {
     try {
-      // First check if setting exists
-      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', key).single();
+      // Store all settings as a JSON object in admin_config
+      const { data: existing } = await supabase
+        .from('admin_config')
+        .select('*')
+        .eq('config_type', 'settings')
+        .single();
       
-      if (existing) {
-        // Update existing
-        const { error } = await supabase.from('app_settings').update({
-          value,
-          updated_at: new Date().toISOString(),
-        }).eq('key', key);
-        
-        if (error) {
-          console.error('Failed to update setting:', key, error);
-          toast.error(`Failed to save ${key}: ${error.message}`);
-          return false;
-        }
-      } else {
-        // Insert new
-        const { error } = await supabase.from('app_settings').insert({
-          key,
-          value,
+      const currentData = existing?.data || {};
+      const updatedData = { ...currentData, [key]: value };
+      
+      // Upsert the config
+      const { error } = await supabase
+        .from('admin_config')
+        .upsert({
+          config_type: 'settings',
+          data: updatedData,
           updated_at: new Date().toISOString(),
         } as any);
-        
-        if (error) {
-          console.error('Failed to insert setting:', key, error);
-          toast.error(`Failed to save ${key}: ${error.message}`);
-          return false;
-        }
+      
+      if (error) {
+        console.error('Failed to save setting:', key, error);
+        toast.error(`Failed to save ${key}: ${error.message}`);
+        return false;
       }
       
       console.log('Setting saved successfully:', key);
@@ -620,8 +618,16 @@ const slashCapsules = async (id: string, amount: number) => {
   };
 
   const getSetting = (key: string) => {
-    const setting = settings.find(s => s.key === key);
-    return setting?.value || null;
+    // Check old app_settings first (for backward compatibility)
+    const oldSetting = settings.find(s => (s as any).key === key);
+    if (oldSetting) return (oldSetting as any).value;
+    
+    // Check new admin_config table
+    const adminConfig = settings.find(s => (s as any).config_type === 'settings');
+    if (adminConfig) {
+      return (adminConfig as any).data?.[key] || null;
+    }
+    return null;
   };
 
   // User with combined data

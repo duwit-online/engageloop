@@ -66,30 +66,37 @@ interface VerificationResult {
 // Platform-specific verification functions
 async function verifyInstagram(username: string): Promise<VerificationResult> {
   try {
-    // Instagram's public profile endpoint
-    const response = await fetch(`https://www.instagram.com/${username}/?__a=1&__d=dis`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json',
-      },
-    });
+    // Try multiple approaches for Instagram
+    const urls = [
+      `https://www.instagram.com/${username}/`,
+      `https://www.instagram.com/${username}/?__a=1`,
+    ];
     
-    if (response.status === 404) {
-      return { isValid: false, profileData: null, error: 'Profile not found' };
+    for (const url of urls) {
+      try {
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          },
+        });
+        
+        if (response.ok) {
+          return {
+            isValid: true,
+            profileData: {
+              username: username,
+              profileUrl: `https://www.instagram.com/${username}/`,
+            },
+          };
+        }
+      } catch (e) {
+        console.error(`Failed to check ${url}:`, e);
+        continue;
+      }
     }
     
-    // Check if profile page exists via status
-    if (response.ok) {
-      return {
-        isValid: true,
-        profileData: {
-          username: username,
-          profileUrl: `https://www.instagram.com/${username}/`,
-        },
-      };
-    }
-    
-    return { isValid: false, profileData: null, error: 'Could not verify profile' };
+    return { isValid: false, profileData: null, error: 'Profile not found' };
   } catch (error) {
     console.error('Instagram verification error:', error);
     return { isValid: false, profileData: null, error: 'Verification failed' };
@@ -98,15 +105,32 @@ async function verifyInstagram(username: string): Promise<VerificationResult> {
 
 async function verifyTwitter(username: string): Promise<VerificationResult> {
   try {
-    // Check if Twitter/X profile exists via public page
-    const response = await fetch(`https://twitter.com/${username}`, {
-      method: 'HEAD',
+    // Use API endpoint instead of HEAD request
+    const response = await fetch(`https://api.twitter.com/2/users/by/username/${username}`, {
       headers: {
+        'Authorization': `Bearer ${Deno.env.get('TWITTER_BEARER_TOKEN') || ''}`,
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       },
     });
     
-    if (response.ok || response.status === 200) {
+    if (response.ok) {
+      return {
+        isValid: true,
+        profileData: {
+          username: username,
+          profileUrl: `https://twitter.com/${username}`,
+        },
+      };
+    }
+    
+    // Fallback: Check simple web request
+    const webResponse = await fetch(`https://twitter.com/${username}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    }).catch(() => null);
+    
+    if (webResponse?.ok) {
       return {
         isValid: true,
         profileData: {
@@ -133,21 +157,25 @@ async function verifyYouTube(username: string): Promise<VerificationResult> {
     ];
     
     for (const url of urls) {
-      const response = await fetch(url, {
-        method: 'HEAD',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
-      });
-      
-      if (response.ok) {
-        return {
-          isValid: true,
-          profileData: {
-            username: username,
-            profileUrl: url,
+      try {
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           },
-        };
+        });
+        
+        if (response.ok || response.status === 200) {
+          return {
+            isValid: true,
+            profileData: {
+              username: username,
+              profileUrl: url,
+            },
+          };
+        }
+      } catch (e) {
+        console.error(`Failed to check ${url}:`, e);
+        continue;
       }
     }
     
