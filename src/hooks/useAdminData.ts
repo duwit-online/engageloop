@@ -589,37 +589,57 @@ const slashCapsules = async (id: string, amount: number) => {
   // Settings CRUD - use admin_config table for simplified storage
   const updateSetting = async (key: string, value: any): Promise<boolean> => {
     try {
-      // Store all settings as a JSON object in admin_config
+      // Compose updated payload
       const { data: existing } = await supabase
         .from('admin_config')
         .select('*')
         .eq('config_type', 'settings')
-        .single();
-      
+        .maybeSingle();
+
       const currentData = existing?.data || {};
       const updatedData = { ...currentData, [key]: value };
-      
-      // Upsert the config
-      const { error } = await supabase
+
+      // Try update first (safe against race where row already exists)
+      const { error: updateErr } = await supabase
         .from('admin_config')
-        .upsert({
-          config_type: 'settings',
-          data: updatedData,
-          updated_at: new Date().toISOString(),
-        } as any);
-      
-      if (error) {
-        console.error('Failed to save setting:', key, error);
-        toast.error(`Failed to save ${key}: ${error.message}`);
-        return false;
+        .update({ data: updatedData, updated_at: new Date().toISOString() })
+        .eq('config_type', 'settings');
+
+      if (!updateErr) {
+        toast.success(`${key.replace(/_/g, ' ')} saved`);
+        await fetchAllData();
+        return true;
       }
-      
-      console.log('Setting saved successfully:', key);
-      toast.success(`${key.replace(/_/g, ' ')} saved`);
-      
-      // Refresh to get latest data
-      await fetchAllData();
-      return true;
+
+      // If update failed (likely because row didn't exist), try insert
+      const { error: insertErr } = await supabase
+        .from('admin_config')
+        .insert({ config_type: 'settings', data: updatedData, updated_at: new Date().toISOString() } as any);
+
+      if (!insertErr) {
+        toast.success(`${key.replace(/_/g, ' ')} saved`);
+        await fetchAllData();
+        return true;
+      }
+
+      // Handle duplicate-key race: another process inserted between our update/insert attempts
+      const dupMessage = insertErr?.message || '';
+      if (dupMessage.toLowerCase().includes('duplicate') || insertErr?.code === '23505') {
+        const { error: retryErr } = await supabase
+          .from('admin_config')
+          .update({ data: updatedData, updated_at: new Date().toISOString() })
+          .eq('config_type', 'settings');
+
+        if (!retryErr) {
+          toast.success(`${key.replace(/_/g, ' ')} saved`);
+          await fetchAllData();
+          return true;
+        }
+      }
+
+      console.error('Failed to save setting:', key, insertErr || updateErr);
+      toast.error(`Failed to save ${key}`);
+      return false;
     } catch (err) {
       console.error('Error in updateSetting:', err);
       toast.error('Failed to save setting');
