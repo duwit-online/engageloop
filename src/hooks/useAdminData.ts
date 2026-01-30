@@ -125,6 +125,16 @@ export function useAdminData() {
     } catch (error) {
       console.error('Error fetching admin data:', error);
       toast.error('Failed to fetch data');
+      // Provide safe defaults so admin UI remains usable when DB table is missing
+      const fallbackConfig = {
+        config_type: 'settings',
+        data: { capsule_release_times: { trusted: 1, normal: 1, restricted: 1, suspended: 0 } },
+      } as any;
+      try {
+        setSettings([fallbackConfig]);
+      } catch (e) {
+        console.error('Failed to set fallback settings:', e);
+      }
     } finally {
       if (!silent) setIsLoading(false);
     }
